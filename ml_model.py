@@ -3,10 +3,12 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import warnings
 
+# Suppress scikit-learn warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 file_path = r"C:\Users\itski\Downloads\MOR\pH_dataset.csv"
@@ -18,10 +20,12 @@ df['Timestamp'] = pd.to_datetime(df['Timestamp'])
 
 df['Time_Hours'] = (df['Timestamp'] - df['Timestamp'].min()).dt.total_seconds() / 3600
 
-X = df[['Time_Hours']]
+scaler = StandardScaler()
+X = scaler.fit_transform(df[['Time_Hours']])
 y = df[['Butterhead Lettuce (pH)', 'Cherry Tomato (pH)']]
 
-model = LinearRegression()
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+
 model.fit(X, y)
 
 arduino_port = 'COM3'
@@ -59,8 +63,7 @@ def update_plot(frame):
 
         print(f"New Data: Lettuce pH = {lettuce_pH}, Tomato pH = {tomato_pH}")
 
-        if len(timestamps) % 10 == 0:
-
+        if len(timestamps) % 5 == 0:
             new_data = pd.DataFrame({
                 'Time_Hours': (np.array(timestamps) - timestamps[0]) / 3600,
                 'Butterhead Lettuce (pH)': lettuce_pH_values,
@@ -68,12 +71,14 @@ def update_plot(frame):
             })
             df = pd.concat([df, new_data], ignore_index=True)
 
-            X = df[['Time_Hours']]
+            X = scaler.fit_transform(df[['Time_Hours']])
             y = df[['Butterhead Lettuce (pH)', 'Cherry Tomato (pH)']]
+
             model.fit(X, y)
 
         current_time_hours = (timestamps[-1] - timestamps[0]) / 3600  # Convert to hours
-        prediction = model.predict(pd.DataFrame([[current_time_hours]], columns=['Time_Hours']))
+        current_time_normalized = scaler.transform([[current_time_hours]])
+        prediction = model.predict(current_time_normalized)
         lettuce_pred, tomato_pred = prediction[0]
 
         lettuce_pH_predictions.append(lettuce_pred)
@@ -84,7 +89,7 @@ def update_plot(frame):
 
     ax1.plot(timestamps, lettuce_pH_values, color='blue', label='Actual pH (Lettuce)', linestyle='-')
     ax1.plot(timestamps, lettuce_pH_predictions, color='red', label='Predicted pH (Lettuce)', linestyle='dashed')
-    ax1.set_xlabel("Time")
+    ax1.set_xlabel("Time (Seconds)")
     ax1.set_ylabel("pH Level")
     ax1.set_title("Real-Time pH (Butterhead Lettuce)")
     ax1.legend()
@@ -92,7 +97,7 @@ def update_plot(frame):
 
     ax2.plot(timestamps, tomato_pH_values, color='green', label='Actual pH (Tomato)', linestyle='-')
     ax2.plot(timestamps, tomato_pH_predictions, color='orange', label='Predicted pH (Tomato)', linestyle='dashed')
-    ax2.set_xlabel("Time")
+    ax2.set_xlabel("Time (Seconds)")
     ax2.set_ylabel("pH Level")
     ax2.set_title("Real-Time pH (Cherry Tomato)")
     ax2.legend()
