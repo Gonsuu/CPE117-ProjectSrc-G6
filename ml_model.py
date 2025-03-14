@@ -1,68 +1,104 @@
-import pandas as pd
-import numpy as np
+import serial
+import time
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+import matplotlib.animation as animation
+import pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
+import numpy as np
+import warnings
 
-# Load the dataset
+warnings.filterwarnings("ignore", category=UserWarning)
+
 file_path = r"C:\Users\itski\Downloads\MOR\pH_dataset.csv"
 df = pd.read_csv(file_path)
 
-# Fix column names (remove any extra formatting issues)
 df.columns = df.columns.str.replace("**", "").str.strip()
 
-# Convert Timestamp to datetime format
 df['Timestamp'] = pd.to_datetime(df['Timestamp'])
 
-# Convert timestamps to numeric values (hours since the first timestamp)
 df['Time_Hours'] = (df['Timestamp'] - df['Timestamp'].min()).dt.total_seconds() / 3600
 
-# Define features (X) and target variables (y)
 X = df[['Time_Hours']]
 y = df[['Butterhead Lettuce (pH)', 'Cherry Tomato (pH)']]
 
-# Split data into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Train a Linear Regression model
 model = LinearRegression()
-model.fit(X_train, y_train)
+model.fit(X, y)
 
-# Make predictions
-y_pred = model.predict(X_test)
+arduino_port = 'COM3'
+baud_rate = 9600
+ser = serial.Serial(arduino_port, baud_rate, timeout=1)
+time.sleep(2)
 
-# Calculate Mean Squared Error
-mse = mean_squared_error(y_test, y_pred)
-print(f"Mean Squared Error: {mse:.4f}")
+timestamps = []
+lettuce_pH_values = []
+tomato_pH_values = []
 
-# Sort values before plotting to avoid zig-zag lines
-sorted_indices = X_test['Time_Hours'].argsort()
-X_test_sorted = X_test.iloc[sorted_indices]
-y_test_sorted = y_test.iloc[sorted_indices]
-y_pred_sorted = y_pred[sorted_indices]
+lettuce_pH_predictions = []
+tomato_pH_predictions = []
 
-# Create a figure with two subplots
+def read_arduino_data():
+    if ser.in_waiting > 0:
+        line = ser.readline().decode('utf-8').strip()
+        if line:
+            try:
+                lettuce_pH, tomato_pH = map(float, line.split(','))
+                return lettuce_pH, tomato_pH
+            except ValueError:
+                print(f"Invalid data received: {line}")
+                return None, None
+    return None, None
+
+def update_plot(frame):
+    global df
+
+    lettuce_pH, tomato_pH = read_arduino_data()
+    if lettuce_pH is not None and tomato_pH is not None:
+        timestamps.append(time.time())
+        lettuce_pH_values.append(lettuce_pH)
+        tomato_pH_values.append(tomato_pH)
+
+        print(f"New Data: Lettuce pH = {lettuce_pH}, Tomato pH = {tomato_pH}")
+
+        if len(timestamps) % 10 == 0:
+
+            new_data = pd.DataFrame({
+                'Time_Hours': (np.array(timestamps) - timestamps[0]) / 3600,
+                'Butterhead Lettuce (pH)': lettuce_pH_values,
+                'Cherry Tomato (pH)': tomato_pH_values
+            })
+            df = pd.concat([df, new_data], ignore_index=True)
+
+            X = df[['Time_Hours']]
+            y = df[['Butterhead Lettuce (pH)', 'Cherry Tomato (pH)']]
+            model.fit(X, y)
+
+        current_time_hours = (timestamps[-1] - timestamps[0]) / 3600  # Convert to hours
+        prediction = model.predict(pd.DataFrame([[current_time_hours]], columns=['Time_Hours']))
+        lettuce_pred, tomato_pred = prediction[0]
+
+        lettuce_pH_predictions.append(lettuce_pred)
+        tomato_pH_predictions.append(tomato_pred)
+
+    ax1.clear()
+    ax2.clear()
+
+    ax1.plot(timestamps, lettuce_pH_values, color='blue', label='Actual pH (Lettuce)', linestyle='-')
+    ax1.plot(timestamps, lettuce_pH_predictions, color='red', label='Predicted pH (Lettuce)', linestyle='dashed')
+    ax1.set_xlabel("Time")
+    ax1.set_ylabel("pH Level")
+    ax1.set_title("Real-Time pH (Butterhead Lettuce)")
+    ax1.legend()
+    ax1.grid(True)
+
+    ax2.plot(timestamps, tomato_pH_values, color='green', label='Actual pH (Tomato)', linestyle='-')
+    ax2.plot(timestamps, tomato_pH_predictions, color='orange', label='Predicted pH (Tomato)', linestyle='dashed')
+    ax2.set_xlabel("Time")
+    ax2.set_ylabel("pH Level")
+    ax2.set_title("Real-Time pH (Cherry Tomato)")
+    ax2.legend()
+    ax2.grid(True)
+
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
 
-# Plot for Butterhead Lettuce
-ax1.plot(X_test_sorted['Time_Hours'], y_test_sorted['Butterhead Lettuce (pH)'], color='blue', label='Actual pH (Lettuce)', linestyle='-')
-ax1.plot(X_test_sorted['Time_Hours'], y_pred_sorted[:, 0], color='red', label='Predicted pH (Lettuce)', linestyle='dashed')
-ax1.set_xlabel("Time (Hours)")
-ax1.set_ylabel("pH Level")
-ax1.set_title("Actual vs Predicted pH (Butterhead Lettuce)")
-ax1.legend()
-ax1.grid(True)
-
-# Plot for Cherry Tomato
-ax2.plot(X_test_sorted['Time_Hours'], y_test_sorted['Cherry Tomato (pH)'], color='green', label='Actual pH (Tomato)', linestyle='-')
-ax2.plot(X_test_sorted['Time_Hours'], y_pred_sorted[:, 1], color='orange', label='Predicted pH (Tomato)', linestyle='dashed')
-ax2.set_xlabel("Time (Hours)")
-ax2.set_ylabel("pH Level")
-ax2.set_title("Actual vs Predicted pH (Cherry Tomato)")
-ax2.legend()
-ax2.grid(True)
-
-# Adjust layout and display the figure
-plt.tight_layout()
+ani = animation.FuncAnimation(fig, update_plot, interval=1000)  # Update every 1 second
 plt.show()
